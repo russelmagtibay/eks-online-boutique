@@ -1,0 +1,34 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: boutique-cluster
+  region: ap-southeast-1
+  version: "1.31"
+  tags:                                      # Best Practice A: FinOps cost-tracking tags
+    Project: online-boutique-microservices
+    Environment: dev
+    ManagedBy: eksctl
+    Owner: russelmagtibay
+
+iam:
+  withOIDC: true                             # Best Practice B: Zero-Trust IAM for Pods (no AWS secret keys)
+
+addons:
+  - name: vpc-cni                            # Best Practice C: Prefix Delegation (110 Pods per t3.medium instead of 17!)
+    configurationValues: '{"env":{"ENABLE_PREFIX_DELEGATION":"true","WARM_PREFIX_TARGET":"1"}}'
+    resolveConflicts: overwrite
+  - name: coredns                            # Internal DNS so our 10 microservices find each other by name
+  - name: kube-proxy                         # Kubernetes internal Service networking
+  - name: eks-pod-identity-agent             # Modern AWS EKS Pod Identity agent
+
+managedNodeGroups:
+  - name: worker-nodes
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 3
+    privateNetworking: true                  # Best Practice D: Worker nodes hidden in Private Subnets (no public IPs)
+    volumeSize: 20
+    volumeType: gp3                          # Best Practice E: gp3 SSDs are 20% cheaper & faster than old gp2
+    volumeEncrypted: true                    # Best Practice F: Encrypt node hard drives at rest

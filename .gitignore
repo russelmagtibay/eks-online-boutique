@@ -1,0 +1,15 @@
+# Never commit Kubernetes cluster credentials or kubeconfig files
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Never commit environment variables or secrets
+.env
+*.pem
+*.key
+
+# IDE & Windows OS temporary files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
