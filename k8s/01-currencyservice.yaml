@@ -1,0 +1,83 @@
+# ============================================================================
+# PART 1: Deployment (Runs & Self-Heals the currencyservice Pods)
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: currencyservice
+  namespace: boutique                        # Lives inside our "boutique" box from Lesson 1
+  labels:
+    app.kubernetes.io/name: currencyservice
+    app.kubernetes.io/part-of: online-boutique
+spec:
+  replicas: 1                                # Keep 1 healthy Pod running at all times
+  selector:
+    matchLabels:
+      app: currencyservice                   # How the Deployment finds its own Pods
+  template:                                  # Blueprint for every Pod this Deployment creates
+    metadata:
+      labels:
+        app: currencyservice                 # MUST match matchLabels above!
+    spec:
+      # 🐧 Linux Pod-Level Security Context (Non-Root User UID 1000)
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: server
+          image: us-central1-docker.pkg.dev/google-samples/microservices-demo/currencyservice:v0.10.2
+          ports:
+            - name: grpc
+              containerPort: 7000            # The port Node.js listens on inside the container
+          env:
+            - name: PORT
+              value: "7000"
+            - name: DISABLE_PROFILER
+              value: "1"
+          # 🐧 Container-Level Linux Hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL                        # Drop all Linux kernel root capabilities
+            privileged: false
+            readOnlyRootFilesystem: true     # Hacker cannot write files to the Linux root disk (/)
+          # Self-Healing Health Checks (Native gRPC Probes on port 7000)
+          readinessProbe:
+            grpc:
+              port: 7000                     # Only send traffic when port 7000 responds healthy
+            initialDelaySeconds: 5
+          livenessProbe:
+            grpc:
+              port: 7000                     # Restart the container automatically if it freezes
+            initialDelaySeconds: 10
+          # 🐧 Linux Kernel cgroups CPU & RAM Guardrails
+          resources:
+            requests:
+              cpu: 100m                      # Reserve 0.1 vCPU
+              memory: 64Mi                   # Reserve 64 MB RAM
+            limits:
+              cpu: 200m                      # Max 0.2 vCPU
+              memory: 128Mi                  # Max 128 MB RAM
+---
+# ============================================================================
+# PART 2: Service (Gives currencyservice a Permanent DNS Name: currencyservice:7000)
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: currencyservice                      # Other services call "currencyservice:7000" by this exact name!
+  namespace: boutique
+  labels:
+    app.kubernetes.io/name: currencyservice
+    app.kubernetes.io/part-of: online-boutique
+spec:
+  type: ClusterIP                            # Internal-only IP (not exposed to the public internet)
+  selector:
+    app: currencyservice                     # Forwards traffic to any Pod labeled "app: currencyservice"
+  ports:
+    - name: grpc
+      port: 7000                             # Service port other microservices call
+      targetPort: 7000                       # Container port on the Pod
