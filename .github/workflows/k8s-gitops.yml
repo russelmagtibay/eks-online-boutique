@@ -1,0 +1,90 @@
+name: "Kubernetes GitOps & Approval Pipeline"
+
+on:
+  # 1. Runs free YAML validation automatically every time you push code
+  push:
+    branches: [master, main]
+    paths:
+      - "k8s/**"
+      - "cluster/**"
+      - ".github/workflows/k8s-gitops.yml"
+
+  # 2. Manual dropdown trigger for AWS actions (Protected by your Approval Gate!)
+  workflow_dispatch:
+    inputs:
+      aws_action:
+        description: "Select AWS Action (Requires Your Approval in aws-production)"
+        required: true
+        default: "apply-k8s"
+        type: choice
+        options:
+          - validate-only
+          - create-cluster
+          - apply-k8s
+          - destroy-cluster
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  CLUSTER_NAME: boutique-cluster
+
+jobs:
+  # ==========================================================================
+  # JOB 1: Free Kubernetes YAML Schema Validation ($0.00 AWS Cost)
+  # ==========================================================================
+  validate-k8s-manifests:
+    name: "1. Validate K8s YAML (Kubeconform)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install & Run Kubeconform (Kubernetes v1.31 Schema Check)
+        run: |
+          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -kubernetes-version 1.31.0 -summary -verbose k8s/
+
+  # ==========================================================================
+  # JOB 2: Approval-Gated AWS EKS Execution (Waits for YOU to click Approve!)
+  # ==========================================================================
+  aws-eks-deployment:
+    name: "2. AWS EKS Action (${{ inputs.aws_action }})"
+    if: github.event_name == 'workflow_dispatch' && inputs.aws_action != 'validate-only'
+    needs: validate-k8s-manifests
+    runs-on: ubuntu-latest
+    environment: aws-production   # <--- LOCKS THE PIPELINE UNTIL YOU CLICK APPROVE!
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::570515227299:role/github-actions-eks-gitops-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install eksctl & kubectl
+        run: |
+          curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz"
+          tar -xzf eksctl_Linux_amd64.tar.gz -C /tmp && sudo mv /tmp/eksctl /usr/local/bin
+          eksctl version
+          kubectl version --client
+
+      - name: Create EKS Cluster (If create-cluster selected)
+        if: inputs.aws_action == 'create-cluster'
+        run: eksctl create cluster -f cluster/cluster.yaml
+
+      - name: Apply Kubernetes Manifests (If apply-k8s selected)
+        if: inputs.aws_action == 'apply-k8s'
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          kubectl apply -f k8s/
+          kubectl get all -n boutique
+
+      - name: Destroy EKS Cluster (If destroy-cluster selected — Protects $130 Credits)
+        if: inputs.aws_action == 'destroy-cluster'
+        run: eksctl delete cluster -f cluster/cluster.yaml --wait
