@@ -1,0 +1,88 @@
+# ============================================================================
+# TOP HALF: Deployment (Hires & Watches Worker #3: The Personal Recommender)
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendationservice
+  namespace: boutique
+  labels:
+    app.kubernetes.io/name: recommendationservice
+    app.kubernetes.io/part-of: online-boutique
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: recommendationservice
+  template:
+    metadata:
+      labels:
+        app: recommendationservice
+    spec:
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: server
+          image: us-central1-docker.pkg.dev/google-samples/microservices-demo/recommendationservice:v0.10.2
+          ports:
+            - name: grpc
+              containerPort: 8080            # Python recommender listens on port 8080
+          # 🐧 Linux Environment Variables injected into the container process
+          env:
+            - name: PORT
+              value: "8080"
+            - name: PRODUCT_CATALOG_SERVICE_ADDR
+              value: "productcatalogservice:3550"   # Connects Worker #3 -> Worker #2 via Linux DNS!
+            - name: DISABLE_PROFILER
+              value: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            grpc:
+              port: 8080
+            initialDelaySeconds: 5
+          livenessProbe:
+            grpc:
+              port: 8080
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 220Mi                  # Python needs slightly more RAM than Go/Node.js
+            limits:
+              cpu: 200m
+              memory: 450Mi
+---
+# ============================================================================
+# BOTTOM HALF: Service (Walkie-Talkie Name: recommendationservice:8080)
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendationservice
+  namespace: boutique
+  labels:
+    app.kubernetes.io/name: recommendationservice
+    app.kubernetes.io/part-of: online-boutique
+spec:
+  type: ClusterIP
+  selector:
+    app: recommendationservice
+  ports:
+    - name: grpc
+      port: 8080
+      targetPort: 8080
